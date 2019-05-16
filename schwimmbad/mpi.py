@@ -240,3 +240,6 @@ class MPIAsyncPool(MPIPoolExecutor):
             Exception: If ``fn(*args)`` raises for any values.
         """
         return custom_starmap_helper(self.submit, fn, callback, iterable)
+
+    def close(self):
+        self.shutdown()
