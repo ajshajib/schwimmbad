@@ -1,10 +1,9 @@
-# Standard library
-from __future__ import division, print_function, absolute_import, unicode_literals
-
 # On some systems mpi4py is available but broken we avoid crashes by importing
 # it only when an MPI Pool is explicitly created.
 # Still make it a global to avoid messing up other things.
 MPI = None
+
+from mpi4py.futures import MPIPoolExecutor
 
 # Project
 from . import log, _VERBOSE
@@ -186,3 +185,53 @@ class MPIPool(BasePool):
 
         for worker in self.workers:
             self.comm.send(None, worker, 0)
+
+# ---------------------------------------------------------------------------
+
+def custom_starmap_helper(submit, worker, callback, iterable):
+    """This is a custom, stripped down version of ``_starmap_helper()`` from
+    ``mpi4py.futures``, which is used in the MPIPoolExecutor
+    """
+
+    # futures = [submit(function, *args) for args in iterable]
+    futures = []
+    for args in iterable:
+        future = submit(worker, *args)
+        future.add_done_callback(callback)
+        futures.append(future)
+
+    def result_iterator():  # pylint: disable=missing-docstring
+        try:
+            futures.reverse()
+            while futures:
+                yield futures.pop().result()
+        except:
+            while futures:
+                futures.pop().cancel()
+            raise
+
+    return result_iterator()
+
+
+class MPIAsyncPool(MPIPoolExecutor):
+
+    def starmap(self, fn, iterable, callback=None, **kwargs):
+        """Return an iterator equivalent to ``itertools.starmap(...)``.
+        Args:
+            fn: A callable that will take positional argument from iterable.
+            iterable: An iterable yielding ``args`` tuples to be used as
+                positional arguments to call ``fn(*args)``.
+            callback: A callable that is called on the result of each fn call.
+        Keyword Args:
+        Returns:
+            An iterator equivalent to ``itertools.starmap(fn, iterable)``
+            but the calls may be evaluated out-of-order.
+        Raises:
+            TimeoutError: If the entire result iterator could not be generated
+                before the given timeout.
+            Exception: If ``fn(*args)`` raises for any values.
+        """
+        if callback is None:
+            callback = lambda *args, **kwargs: pass
+
+        return custom_starmap_helper(self.submit, fn, callback, iterable)
